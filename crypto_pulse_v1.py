@@ -381,31 +381,39 @@ async def drops_monitoring_loop():
             await asyncio.sleep(1)
 
 # ==========================================
-# ЧАСТЬ 4: ВЕБ-СЕРВЕР И ЗАПУСК (ДЛЯ RENDER)
+# ЧАСТЬ 4: ВЕБ-СЕРВЕР И АСИНХРОННЫЙ ЗАПУСК
 # ==========================================
+import os
+from aiohttp import web
+
 async def webhook_handle(request):
-    return web.Response(text="Crypto Pulse Bot Status: ACTIVE 24/7")
+    return web.Response(text="Crypto Pulse Bot Status: ACTIVE")
 
-async def on_startup_wrapper(dispatcher):
-    # Запускаем наш фоновый мониторинг рынка
-    asyncio.create_task(drops_monitoring_loop())
-    logging.info("Фоновый сканер рынка успешно запущен.")
-
-if __name__ == "__main__":
-    # Создаем веб-приложение aiohttp
+async def main():
+    # Настраиваем веб-сервер на порт 7860 для Hugging Face
     web_app = web.Application()
     web_app.router.add_get('/', webhook_handle)
     
-    # Настраиваем и поднимаем веб-сервер
     runner = web.AppRunner(web_app)
-    asyncio.get_event_loop().run_until_complete(runner.setup())
+    await runner.setup()
     
-    # Автоматически подхватываем порт от хостинга (хоть 7860 на HF, хоть любой другой на Render)
+    # Порт 7860 по умолчанию для HF Spaces
     port = int(os.getenv("PORT", 7860))
     site = web.TCPSite(runner, '0.0.0.0', port)
-    asyncio.get_event_loop().run_until_complete(site.start())
-    logging.info(f"Веб-сервер успешно развернут на порту {port}")
+    await site.start()
+    logging.info(f"Веб-сервер запущен на порту {port}")
     
-    # Запускаем обычный поллинг aiogram на текущем цикле
-    from aiogram import executor
-    executor.start_polling(dp, skip_updates=True, on_startup=on_startup_wrapper)
+    # Запускаем фоновый сканер рынка
+    asyncio.create_task(drops_monitoring_loop())
+    
+    # Стартуем поллинг бота
+    try:
+        await dp.skip_updates()
+        await dp.start_polling()
+    finally:
+        await bot.close()
+        await storage.close()
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
