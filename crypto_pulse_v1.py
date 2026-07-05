@@ -49,7 +49,7 @@ USER_PROFILE = {
     "alert_percent": 4.0,
     "check_interval": 60,
     "min_price": 0.001,
-    "max_price": 100000.0,
+    "max_price": 1.0
 }
 
 MANUAL_ALLOWED = set()
