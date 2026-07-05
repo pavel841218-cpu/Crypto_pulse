@@ -6,11 +6,13 @@ import sys
 import asyncio
 import logging
 import httpx
-from aiogram import Bot, Dispatcher, types
-from aiogram.contrib.fsm_storage.memory import MemoryStorage
-from aiogram.dispatcher import FSMContext
-from aiogram.dispatcher.filters.state import State, StatesGroup
-from aiogram.utils.exceptions import MessageNotModified, InvalidQueryID
+from aiogram import Bot, Dispatcher, types, F
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.exceptions import TelegramBadRequest
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.filters import Command
 from aiohttp import web
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -36,17 +38,17 @@ CHAT_ID = int(os.getenv("CHAT_ID", "6908511803"))
 
 bot = Bot(token=TOKEN)
 storage = MemoryStorage()
-dp = Dispatcher(bot, storage=storage)
+dp = Dispatcher(storage=storage)
 
 # ==========================================
-# ЧАСТЬ 3: ПРОФИЛЬ И МЕНЮ (ПО УМОЛЧАНИЮ BINGX)
+# ЧАСТЬ 3: ПРОФИЛЬ И МЕНЮ
 # ==========================================
 USER_PROFILE = {
-    "exchange": "bingx",   # Переключено на BingX по умолчанию
+    "exchange": "bingx",
     "alert_percent": 4.0,
-    "check_interval": 60,   # секунды
+    "check_interval": 60,
     "min_price": 0.001,
-    "max_price": 100000.0,  # Расширил лимит, чтобы дорогие монеты не резались
+    "max_price": 100000.0,
 }
 
 MANUAL_ALLOWED = set()
@@ -60,57 +62,59 @@ class BotStates(StatesGroup):
     waiting_for_del_coin = State()
 
 def get_main_menu():
-    keyboard = types.InlineKeyboardMarkup(row_width=1)
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[])
     ex_names = {"binance": "Binance 🔸", "bitget": "Bitget 🛡️", "bingx": "BingX 💠"}
     current_ex = ex_names.get(USER_PROFILE["exchange"], USER_PROFILE["exchange"].upper())
     t_min = USER_PROFILE["check_interval"] // 60
-    keyboard.add(
-        types.InlineKeyboardButton(text=f"🏦 Биржа: {current_ex}", callback_data="m_exchange"),
-        types.InlineKeyboardButton(text=f"📈 Порог: {USER_PROFILE['alert_percent']}%", callback_data="m_percent"),
-        types.InlineKeyboardButton(text=f"⏳ Таймфрейм: {t_min} мин", callback_data="m_time"),
-        types.InlineKeyboardButton(text="➕ Добавить монету", callback_data="coin_add"),
-        types.InlineKeyboardButton(text="❌ Удалить монету", callback_data="coin_del"),
-        types.InlineKeyboardButton(text="🔄 Обновить панель", callback_data="m_refresh")
-    )
+    keyboard.inline_keyboard.extend([
+        [InlineKeyboardButton(text=f"🏦 Биржа: {current_ex}", callback_data="m_exchange")],
+        [InlineKeyboardButton(text=f"📈 Порог: {USER_PROFILE['alert_percent']}%", callback_data="m_percent")],
+        [InlineKeyboardButton(text=f"⏳ Таймфрейм: {t_min} мин", callback_data="m_time")],
+        [InlineKeyboardButton(text="➕ Добавить монету", callback_data="coin_add")],
+        [InlineKeyboardButton(text="❌ Удалить монету", callback_data="coin_del")],
+        [InlineKeyboardButton(text="🔄 Обновить панель", callback_data="m_refresh")]
+    ])
     return keyboard
 
 def get_exchange_kb():
-    keyboard = types.InlineKeyboardMarkup(row_width=1)
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[])
     for code, text in [("binance", "Binance 🔸"), ("bitget", "Bitget 🛡️"), ("bingx", "BingX 💠")]:
         display = f"✅ {text}" if USER_PROFILE["exchange"] == code else text
-        keyboard.add(types.InlineKeyboardButton(text=display, callback_data=f"set_ex_{code}"))
-    keyboard.add(types.InlineKeyboardButton(text="⬅️ Назад", callback_data="m_main"))
+        keyboard.inline_keyboard.append([InlineKeyboardButton(text=display, callback_data=f"set_ex_{code}")])
+    keyboard.inline_keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="m_main")])
     return keyboard
 
 def get_percent_kb():
-    keyboard = types.InlineKeyboardMarkup(row_width=3)
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[])
     percents = [1.0, 2.0, 3.0, 4.0, 5.0, 7.0, 10.0, 15.0, 20.0]
     row = []
     for p in percents:
         display = f"✅ {p}%" if USER_PROFILE["alert_percent"] == p else f"{p}%"
-        row.append(types.InlineKeyboardButton(text=display, callback_data=f"set_pct_{p}"))
+        row.append(InlineKeyboardButton(text=display, callback_data=f"set_pct_{p}"))
         if len(row) == 3:
-            keyboard.add(*row)
+            keyboard.inline_keyboard.append(row)
             row = []
-    keyboard.add(types.InlineKeyboardButton(text="✏️ Ввести свой %", callback_data="inp_pct"))
-    keyboard.add(types.InlineKeyboardButton(text="⬅️ Назад", callback_data="m_main"))
+    if row:
+        keyboard.inline_keyboard.append(row)
+    keyboard.inline_keyboard.append([InlineKeyboardButton(text="✏️ Ввести свой %", callback_data="inp_pct")])
+    keyboard.inline_keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="m_main")])
     return keyboard
 
 def get_time_kb():
-    keyboard = types.InlineKeyboardMarkup(row_width=3)
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[])
     intervals = [1, 5, 10, 15, 30, 60, 240]
     current_min = USER_PROFILE["check_interval"] // 60
     row = []
     for i in intervals:
         display = f"✅ {i}м" if current_min == i else f"{i}м"
-        row.append(types.InlineKeyboardButton(text=display, callback_data=f"set_t_{i}"))
+        row.append(InlineKeyboardButton(text=display, callback_data=f"set_t_{i}"))
         if len(row) == 3:
-            keyboard.add(*row)
+            keyboard.inline_keyboard.append(row)
             row = []
     if row:
-        keyboard.add(*row)
-    keyboard.add(types.InlineKeyboardButton(text="✏️ Ввести своё время (мин)", callback_data="inp_t"))
-    keyboard.add(types.InlineKeyboardButton(text="⬅️ Назад", callback_data="m_main"))
+        keyboard.inline_keyboard.append(row)
+    keyboard.inline_keyboard.append([InlineKeyboardButton(text="✏️ Ввести своё время (мин)", callback_data="inp_t")])
+    keyboard.inline_keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="m_main")])
     return keyboard
 
 def make_profile_text():
@@ -119,147 +123,147 @@ def make_profile_text():
     allowed_str = ", ".join(MANUAL_ALLOWED) if MANUAL_ALLOWED else "Нет"
     blocked_str = ", ".join(MANUAL_BLOCKED) if MANUAL_BLOCKED else "Нет"
     return (
-        f"⚙️ **Панель управления Crypto Pulse 1.0**\n\n"
-        f"🏦 Активная биржа по умолчанию: *{ex_names.get(USER_PROFILE['exchange'])}*\n"
-        f"📈 Trigger изменения: *{USER_PROFILE['alert_percent']}%*\n"
-        f"⏳ Интервал проверки рынка: *{t_min} мин.*\n"
-        f"🎯 Фильтр базовой цены: *{USER_PROFILE['min_price']} - {USER_PROFILE['max_price']} USDT*\n\n"
-        f"➕ Белый список (ручные монеты): `{allowed_str}`\n"
-        f"❌ Черный список (удаленные монеты): `{blocked_str}`\n\n"
+        f"⚙️ <b>Панель управления Crypto Pulse 1.0</b>\n\n"
+        f"🏦 Активная биржа по умолчанию: <b>{ex_names.get(USER_PROFILE['exchange'])}</b>\n"
+        f"📈 Trigger изменения: <b>{USER_PROFILE['alert_percent']}%</b>\n"
+        f"⏳ Интервал проверки рынка: <b>{t_min} мин.</b>\n"
+        f"🎯 Фильтр базовой цены: <b>{USER_PROFILE['min_price']} - {USER_PROFILE['max_price']} USDT</b>\n\n"
+        f"➕ Белый список (ручные монеты): <code>{allowed_str}</code>\n"
+        f"❌ Черный список (удаленные монеты): <code>{blocked_str}</code>\n\n"
         f"Алерт-сообщения приходят ниже и не сбивают эту строку настроек! 👇"
     )
 
 # ==========================================
 # ОБРАБОТЧИКИ КОМАНД И КНОПОК
 # ==========================================
-@dp.message_handler(commands=['start'], state="*")
+@dp.message(Command('start'))
 async def start_cmd(message: types.Message, state: FSMContext):
-    await state.finish()
-    await message.answer(make_profile_text(), parse_mode="Markdown", reply_markup=get_main_menu())
+    await state.clear()
+    await message.answer(make_profile_text(), parse_mode="HTML", reply_markup=get_main_menu())
 
-@dp.callback_query_handler(lambda c: c.data == "m_main", state="*")
+@dp.callback_query(F.data == "m_main")
 async def back_to_main(callback: types.CallbackQuery, state: FSMContext):
     try:
-        await state.finish()
+        await state.clear()
         await callback.answer()
-        await callback.message.edit_text(make_profile_text(), parse_mode="Markdown", reply_markup=get_main_menu())
-    except (InvalidQueryID, MessageNotModified):
+        await callback.message.edit_text(make_profile_text(), parse_mode="HTML", reply_markup=get_main_menu())
+    except TelegramBadRequest:
         pass
 
-@dp.callback_query_handler(lambda c: c.data == "m_refresh", state="*")
+@dp.callback_query(F.data == "m_refresh")
 async def refresh_panel(callback: types.CallbackQuery):
     try:
         await callback.answer("Обновлено!")
-        await callback.message.edit_text(make_profile_text(), parse_mode="Markdown", reply_markup=get_main_menu())
-    except (InvalidQueryID, MessageNotModified):
+        await callback.message.edit_text(make_profile_text(), parse_mode="HTML", reply_markup=get_main_menu())
+    except TelegramBadRequest:
         pass
 
-@dp.callback_query_handler(lambda c: c.data == "m_exchange")
+@dp.callback_query(F.data == "m_exchange")
 async def m_ex_call(callback: types.CallbackQuery):
     try:
         await callback.answer()
         await callback.message.edit_text("🏦 Выбери фьючерсную биржу из списка по умолчанию:", reply_markup=get_exchange_kb())
-    except InvalidQueryID:
+    except TelegramBadRequest:
         pass
 
-@dp.callback_query_handler(lambda c: c.data.startswith("set_ex_"))
+@dp.callback_query(F.data.startswith("set_ex_"))
 async def set_ex(callback: types.CallbackQuery):
     try:
         new_ex = callback.data.split("_")[2]
         USER_PROFILE["exchange"] = new_ex
         price_history.clear()
         await callback.answer(f"Переключено на {new_ex.upper()}!", show_alert=True)
-        await callback.message.edit_text(make_profile_text(), parse_mode="Markdown", reply_markup=get_main_menu())
-    except (InvalidQueryID, MessageNotModified):
+        await callback.message.edit_text(make_profile_text(), parse_mode="HTML", reply_markup=get_main_menu())
+    except TelegramBadRequest:
         pass
 
-@dp.callback_query_handler(lambda c: c.data == "m_percent")
+@dp.callback_query(F.data == "m_percent")
 async def m_pct_call(callback: types.CallbackQuery):
     try:
         await callback.answer()
         await callback.message.edit_text("📈 Выбери порог изменения цены:", reply_markup=get_percent_kb())
-    except InvalidQueryID:
+    except TelegramBadRequest:
         pass
 
-@dp.callback_query_handler(lambda c: c.data.startswith("set_pct_"))
+@dp.callback_query(F.data.startswith("set_pct_"))
 async def set_pct(callback: types.CallbackQuery):
     try:
         USER_PROFILE["alert_percent"] = float(callback.data.split("_")[2])
         await callback.answer("Процент обновлен!")
-        await callback.message.edit_text(make_profile_text(), parse_mode="Markdown", reply_markup=get_main_menu())
-    except (InvalidQueryID, MessageNotModified):
+        await callback.message.edit_text(make_profile_text(), parse_mode="HTML", reply_markup=get_main_menu())
+    except TelegramBadRequest:
         pass
 
-@dp.callback_query_handler(lambda c: c.data == "inp_pct")
-async def inp_pct(callback: types.CallbackQuery):
+@dp.callback_query(F.data == "inp_pct")
+async def inp_pct(callback: types.CallbackQuery, state: FSMContext):
     try:
         await callback.answer()
-        await BotStates.waiting_for_percent.set()
+        await state.set_state(BotStates.waiting_for_percent)
         await callback.message.answer("✏️ Введи процент изменения цены (от 1 до 100):")
-    except InvalidQueryID:
+    except TelegramBadRequest:
         pass
 
-@dp.message_handler(state=BotStates.waiting_for_percent)
+@dp.message(BotStates.waiting_for_percent)
 async def proc_custom_pct(message: types.Message, state: FSMContext):
     try:
         val = round(float(message.text.strip().replace(",", ".")), 2)
         if 1.0 <= val <= 100.0:
             USER_PROFILE["alert_percent"] = val
-            await state.finish()
+            await state.clear()
             await message.answer(f"✅ Установлен порог в {val}%!", reply_markup=get_main_menu())
         else:
             await message.answer("❌ Введи число от 1 до 100:")
     except ValueError:
         await message.answer("❌ Отправь корректное число цифрами:")
 
-@dp.callback_query_handler(lambda c: c.data == "m_time")
+@dp.callback_query(F.data == "m_time")
 async def m_time_call(callback: types.CallbackQuery):
     try:
         await callback.answer()
         await callback.message.edit_text("⏳ Выбери интервал сканирования рынка:", reply_markup=get_time_kb())
-    except InvalidQueryID:
+    except TelegramBadRequest:
         pass
 
-@dp.callback_query_handler(lambda c: c.data.startswith("set_t_"))
+@dp.callback_query(F.data.startswith("set_t_"))
 async def set_time(callback: types.CallbackQuery):
     try:
         minutes = int(callback.data.split("_")[2])
         USER_PROFILE["check_interval"] = minutes * 60
         await callback.answer(f"Таймфрейм изменен на {minutes} мин.!")
-        await callback.message.edit_text(make_profile_text(), parse_mode="Markdown", reply_markup=get_main_menu())
-    except (InvalidQueryID, MessageNotModified):
+        await callback.message.edit_text(make_profile_text(), parse_mode="HTML", reply_markup=get_main_menu())
+    except TelegramBadRequest:
         pass
 
-@dp.callback_query_handler(lambda c: c.data == "inp_t")
-async def inp_time(callback: types.CallbackQuery):
+@dp.callback_query(F.data == "inp_t")
+async def inp_time(callback: types.CallbackQuery, state: FSMContext):
     try:
         await callback.answer()
-        await BotStates.waiting_for_time.set()
+        await state.set_state(BotStates.waiting_for_time)
         await callback.message.answer("✏️ Введи любое количество минут для таймфрейма:")
-    except InvalidQueryID:
+    except TelegramBadRequest:
         pass
 
-@dp.message_handler(state=BotStates.waiting_for_time)
+@dp.message(BotStates.waiting_for_time)
 async def proc_custom_time(message: types.Message, state: FSMContext):
     if message.text.isdigit():
         minutes = int(message.text)
         if minutes >= 1:
             USER_PROFILE["check_interval"] = minutes * 60
-            await state.finish()
+            await state.clear()
             await message.answer(f"✅ Интервал сканирования обновлен: {minutes} мин.!", reply_markup=get_main_menu())
             return
     await message.answer("❌ Введи корректное целое число минут:")
 
-@dp.callback_query_handler(lambda c: c.data == "coin_add")
-async def coin_add_call(callback: types.CallbackQuery):
+@dp.callback_query(F.data == "coin_add")
+async def coin_add_call(callback: types.CallbackQuery, state: FSMContext):
     try:
         await callback.answer()
-        await BotStates.waiting_for_add_coin.set()
+        await state.set_state(BotStates.waiting_for_add_coin)
         await callback.message.answer("➕ Напиши тикер монеты, которую нужно принудительно добавить в сканер (например: BTC или SOL):")
-    except InvalidQueryID:
+    except TelegramBadRequest:
         pass
 
-@dp.message_handler(state=BotStates.waiting_for_add_coin)
+@dp.message(BotStates.waiting_for_add_coin)
 async def proc_coin_add(message: types.Message, state: FSMContext):
     coin = message.text.strip().upper().replace("USDT", "")
     if coin:
@@ -267,21 +271,21 @@ async def proc_coin_add(message: types.Message, state: FSMContext):
             MANUAL_BLOCKED.remove(coin)
         MANUAL_ALLOWED.add(coin)
         price_history.clear()
-        await state.finish()
+        await state.clear()
         await message.answer(f"✅ Монета {coin} добавлена в список исключений сканера!", reply_markup=get_main_menu())
     else:
         await message.answer("Неверный формат ввода.")
 
-@dp.callback_query_handler(lambda c: c.data == "coin_del")
-async def coin_del_call(callback: types.CallbackQuery):
+@dp.callback_query(F.data == "coin_del")
+async def coin_del_call(callback: types.CallbackQuery, state: FSMContext):
     try:
         await callback.answer()
-        await BotStates.waiting_for_del_coin.set()
+        await state.set_state(BotStates.waiting_for_del_coin)
         await callback.message.answer("❌ Напиши тикер монеты, которую нужно полностью скрыть и удалить из алертов (например: XRP):")
-    except InvalidQueryID:
+    except TelegramBadRequest:
         pass
 
-@dp.message_handler(state=BotStates.waiting_for_del_coin)
+@dp.message(BotStates.waiting_for_del_coin)
 async def proc_coin_del(message: types.Message, state: FSMContext):
     coin = message.text.strip().upper().replace("USDT", "")
     if coin:
@@ -290,7 +294,7 @@ async def proc_coin_del(message: types.Message, state: FSMContext):
         MANUAL_BLOCKED.add(coin)
         if f"{coin}USDT" in price_history:
             del price_history[f"{coin}USDT"]
-        await state.finish()
+        await state.clear()
         await message.answer(f"❌ Монета {coin} полностью удалена и заблокирована!", reply_markup=get_main_menu())
     else:
         await message.answer("Неверный формат ввода.")
@@ -361,12 +365,12 @@ async def drops_monitoring_loop():
                     percent_change = ((current_price - old_price) / old_price) * 100
                     if abs(percent_change) >= current_threshold:
                         t_min = USER_PROFILE["check_interval"] // 60
-                        msg = (f"⚡️ **Crypto Pulse | {exchange_label}**\n"
-                               f"🔥 `{clean_ticker}`\n"
-                               f"Изменение: `{percent_change:.2f}%` за {t_min} мин ⏳\n"
-                               f"Текущая цена: `{current_price} USDT`")
+                        msg = (f"⚡️ <b>Crypto Pulse | {exchange_label}</b>\n"
+                               f"🔥 <code>{clean_ticker}</code>\n"
+                               f"Изменение: <code>{percent_change:.2f}%</code> за {t_min} мин ⏳\n"
+                               f"Текущая цена: <code>{current_price} USDT</code>")
                         try:
-                            await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+                            await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="HTML")
                             await asyncio.sleep(0.1)
                         except Exception as e:
                             logging.error(f"Ошибка отправки сообщения: {e}")
@@ -411,9 +415,9 @@ async def main():
     # 4. Запуск поллинга напрямую в текущем цикле без executor
     try:
         logging.info("Бот запущен и ожидает команд в Telegram...")
-        await dp.start_polling()
+        await dp.start_polling(bot)
     finally:
-        await bot.close()
+        await bot.session.close()
         await storage.close()
 
 if __name__ == "__main__":
@@ -421,4 +425,3 @@ if __name__ == "__main__":
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
         logging.info("Бот остановлен.")
-
