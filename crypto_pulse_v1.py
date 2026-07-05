@@ -387,7 +387,7 @@ async def webhook_handle(request):
     return web.Response(text="Crypto Pulse Bot Status: ACTIVE 24/7")
 
 async def main():
-    # 1. Настраиваем и запускаем веб-сервер для Render
+    # 1. Запускаем веб-сервер aiohttp на одном цикле с ботом
     web_app = web.Application()
     web_app.router.add_get('/', webhook_handle)
     
@@ -399,20 +399,30 @@ async def main():
     await site.start()
     logging.info(f"Веб-сервер успешно развернут на порту {port}")
     
-    # 2. Запускаем фоновый мониторинг рынка
-    asyncio.create_task(drops_monitoring_loop())
-    logging.info("Фоновый сканер рынка запущен в асинхронном режиме.")
-    
-    # 3. Стартуем поллинг бота (управляем циклом вручную)
+    # 2. Сбрасываем старые вебхуки, чтобы убрать ошибку Raise err
     try:
-        await dp.skip_updates()
+        await bot.delete_webhook(drop_pending_updates=True)
+        logging.info("Старые сессии и вебхуки Telegram успешно сброшены.")
+    except Exception as e:
+        logging.error(f"Не удалось сбросить вебхук: {e}")
+    
+    # 3. Запускаем фоновый мониторинг рынка
+    asyncio.create_task(drops_monitoring_loop())
+    
+    # 4. Стартуем поллинг aiogram вручную в текущем асинхронном цикле
+    try:
+        logging.info("Бот запущен и готов к работе в Telegram!")
         await dp.start_polling()
     finally:
         await bot.close()
         await storage.close()
 
 if __name__ == "__main__":
-    # Запуск единого асинхронного цикла
-    asyncio.run(main())
+    # Запуск единого главного цикла событий
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logging.info("Бот остановлен.")
+
 
 
