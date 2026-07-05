@@ -11,7 +11,6 @@ from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.utils.exceptions import MessageNotModified, InvalidQueryID
-from aiogram.utils.executor import Executor
 from aiohttp import web
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -40,14 +39,14 @@ storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 
 # ==========================================
-# ЧАСТЬ 3: ПРОФИЛЬ И МЕНЮ
+# ЧАСТЬ 3: ПРОФИЛЬ И МЕНЮ (ПО УМОЛЧАНИЮ BINGX)
 # ==========================================
 USER_PROFILE = {
-    "exchange": "binance",
+    "exchange": "bingx",   # Переключено на BingX по умолчанию
     "alert_percent": 4.0,
     "check_interval": 60,   # секунды
     "min_price": 0.001,
-    "max_price": 1.0,
+    "max_price": 100000.0,  # Расширил лимит, чтобы дорогие монеты не резались
 }
 
 MANUAL_ALLOWED = set()
@@ -302,7 +301,7 @@ async def proc_coin_del(message: types.Message, state: FSMContext):
 async def fetch_market_prices():
     exchange = USER_PROFILE["exchange"]
     filtered = {}
-    async with httpx.AsyncClient(timeout=5.0) as client:
+    async with httpx.AsyncClient(timeout=8.0) as client:
         try:
             if exchange == "binance":
                 url = "https://fapi.binance.com/fapi/v1/ticker/price"
@@ -381,13 +380,13 @@ async def drops_monitoring_loop():
             await asyncio.sleep(1)
 
 # ==========================================
-# ЧАСТЬ 4: ВЕБ-СЕРВЕР И АСИНХРОННЫЙ ЗАПУСК
+# ЧАСТЬ 4: ЧИСТЫЙ АСИНХРОННЫЙ ЗАПУСК
 # ==========================================
 async def webhook_handle(request):
     return web.Response(text="Crypto Pulse Bot Status: ACTIVE 24/7")
 
 async def main():
-    # 1. Запускаем веб-сервер aiohttp на одном цикле с ботом
+    # 1. Запуск веб-сервера aiohttp
     web_app = web.Application()
     web_app.router.add_get('/', webhook_handle)
     
@@ -397,32 +396,28 @@ async def main():
     port = int(os.getenv("PORT", 7860))
     site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
-    logging.info(f"Веб-сервер успешно развернут на порту {port}")
+    logging.info(f"Веб-сервер успешно запущен на порту {port}")
     
-    # 2. Сбрасываем старые вебхуки, чтобы убрать ошибку Raise err
+    # 2. Полный сброс зависших сессий вебхуков
     try:
         await bot.delete_webhook(drop_pending_updates=True)
-        logging.info("Старые сессии и вебхуки Telegram успешно сброшены.")
+        logging.info("Все старые сессии Telegram успешно очищены.")
     except Exception as e:
-        logging.error(f"Не удалось сбросить вебхук: {e}")
+        logging.error(f"Ошибка очистки сессий: {e}")
     
-    # 3. Запускаем фоновый мониторинг рынка
+    # 3. Запуск фонового таска мониторинга
     asyncio.create_task(drops_monitoring_loop())
     
-    # 4. Стартуем поллинг aiogram вручную в текущем асинхронном цикле
+    # 4. Запуск поллинга напрямую в текущем цикле без executor
     try:
-        logging.info("Бот запущен и готов к работе в Telegram!")
+        logging.info("Бот запущен и ожидает команд в Telegram...")
         await dp.start_polling()
     finally:
         await bot.close()
         await storage.close()
 
 if __name__ == "__main__":
-    # Запуск единого главного цикла событий
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
         logging.info("Бот остановлен.")
-
-
-
