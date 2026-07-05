@@ -383,30 +383,27 @@ async def drops_monitoring_loop():
 # ==========================================
 # ЧАСТЬ 4: ВЕБ-СЕРВЕР И АСИНХРОННЫЙ ЗАПУСК
 # ==========================================
-import os
-from aiohttp import web
-
 async def webhook_handle(request):
-    return web.Response(text="Crypto Pulse Bot Status: ACTIVE")
+    return web.Response(text="Crypto Pulse Bot Status: ACTIVE 24/7")
 
 async def main():
-    # Настраиваем веб-сервер на порт 7860 для Hugging Face
+    # 1. Настраиваем и запускаем веб-сервер для Render
     web_app = web.Application()
     web_app.router.add_get('/', webhook_handle)
     
     runner = web.AppRunner(web_app)
     await runner.setup()
     
-    # Порт 7860 по умолчанию для HF Spaces
     port = int(os.getenv("PORT", 7860))
     site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
-    logging.info(f"Веб-сервер запущен на порту {port}")
+    logging.info(f"Веб-сервер успешно развернут на порту {port}")
     
-    # Запускаем фоновый сканер рынка
+    # 2. Запускаем фоновый мониторинг рынка
     asyncio.create_task(drops_monitoring_loop())
+    logging.info("Фоновый сканер рынка запущен в асинхронном режиме.")
     
-    # Стартуем поллинг бота
+    # 3. Стартуем поллинг бота (управляем циклом вручную)
     try:
         await dp.skip_updates()
         await dp.start_polling()
@@ -415,5 +412,7 @@ async def main():
         await storage.close()
 
 if __name__ == "__main__":
+    # Запуск единого асинхронного цикла
     asyncio.run(main())
+
 
