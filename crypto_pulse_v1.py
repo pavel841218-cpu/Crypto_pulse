@@ -1,4 +1,3 @@
-
 # ==========================================
 # ЧАСТЬ 1: БИБЛИОТЕКИ И НАСТРОЙКА ЛОГОВ
 # ==========================================
@@ -139,11 +138,13 @@ def make_profile_text():
 # ==========================================
 @dp.message(Command('start'))
 async def start_cmd(message: types.Message, state: FSMContext):
+    logging.info(f"Пользователь {message.from_user.id} вызвал команду /start")
     await state.clear()
     await message.answer(make_profile_text(), parse_mode="HTML", reply_markup=get_main_menu())
 
 @dp.callback_query(F.data == "m_main")
 async def back_to_main(callback: types.CallbackQuery, state: FSMContext):
+    logging.info("Нажата кнопка: Назад в главное меню")
     try:
         await state.clear()
         await callback.answer()
@@ -153,6 +154,7 @@ async def back_to_main(callback: types.CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data == "m_refresh")
 async def refresh_panel(callback: types.CallbackQuery):
+    logging.info("Нажата кнопка: Обновить панель")
     try:
         await callback.answer("Обновлено!")
         await callback.message.edit_text(make_profile_text(), parse_mode="HTML", reply_markup=get_main_menu())
@@ -161,6 +163,7 @@ async def refresh_panel(callback: types.CallbackQuery):
 
 @dp.callback_query(F.data == "m_exchange")
 async def m_ex_call(callback: types.CallbackQuery):
+    logging.info("Нажата кнопка: Выбор биржи")
     try:
         await callback.answer()
         await callback.message.edit_text("🏦 Выбери фьючерсную биржу из списка по умолчанию:", reply_markup=get_exchange_kb())
@@ -171,6 +174,7 @@ async def m_ex_call(callback: types.CallbackQuery):
 async def set_ex(callback: types.CallbackQuery):
     try:
         new_ex = callback.data.split("_")[2]
+        logging.info(f"Выбрана новая биржа: {new_ex}")
         USER_PROFILE["exchange"] = new_ex
         price_history.clear()
         await callback.answer(f"Переключено на {new_ex.upper()}!", show_alert=True)
@@ -180,6 +184,7 @@ async def set_ex(callback: types.CallbackQuery):
 
 @dp.callback_query(F.data == "m_percent")
 async def m_pct_call(callback: types.CallbackQuery):
+    logging.info("Нажата кнопка: Изменение процента")
     try:
         await callback.answer()
         await callback.message.edit_text("📈 Выбери порог изменения цены:", reply_markup=get_percent_kb())
@@ -189,7 +194,9 @@ async def m_pct_call(callback: types.CallbackQuery):
 @dp.callback_query(F.data.startswith("set_pct_"))
 async def set_pct(callback: types.CallbackQuery):
     try:
-        USER_PROFILE["alert_percent"] = float(callback.data.split("_")[2])
+        new_pct = float(callback.data.split("_")[2])
+        logging.info(f"Установлен процент: {new_pct}%")
+        USER_PROFILE["alert_percent"] = new_pct
         await callback.answer("Процент обновлен!")
         await callback.message.edit_text(make_profile_text(), parse_mode="HTML", reply_markup=get_main_menu())
     except TelegramBadRequest:
@@ -210,6 +217,7 @@ async def proc_custom_pct(message: types.Message, state: FSMContext):
         val = round(float(message.text.strip().replace(",", ".")), 2)
         if 1.0 <= val <= 100.0:
             USER_PROFILE["alert_percent"] = val
+            logging.info(f"Введен кастомный процент: {val}%")
             await state.clear()
             await message.answer(f"✅ Установлен порог в {val}%!", reply_markup=get_main_menu())
         else:
@@ -219,6 +227,7 @@ async def proc_custom_pct(message: types.Message, state: FSMContext):
 
 @dp.callback_query(F.data == "m_time")
 async def m_time_call(callback: types.CallbackQuery):
+    logging.info("Нажата кнопка: Изменение таймфрейма")
     try:
         await callback.answer()
         await callback.message.edit_text("⏳ Выбери интервал сканирования рынка:", reply_markup=get_time_kb())
@@ -229,6 +238,7 @@ async def m_time_call(callback: types.CallbackQuery):
 async def set_time(callback: types.CallbackQuery):
     try:
         minutes = int(callback.data.split("_")[2])
+        logging.info(f"Установлен интервал: {minutes} мин.")
         USER_PROFILE["check_interval"] = minutes * 60
         await callback.answer(f"Таймфрейм изменен на {minutes} мин.!")
         await callback.message.edit_text(make_profile_text(), parse_mode="HTML", reply_markup=get_main_menu())
@@ -250,6 +260,7 @@ async def proc_custom_time(message: types.Message, state: FSMContext):
         minutes = int(message.text)
         if minutes >= 1:
             USER_PROFILE["check_interval"] = minutes * 60
+            logging.info(f"Введен кастомный интервал: {minutes} мин.")
             await state.clear()
             await message.answer(f"✅ Интервал сканирования обновлен: {minutes} мин.!", reply_markup=get_main_menu())
             return
@@ -272,6 +283,7 @@ async def proc_coin_add(message: types.Message, state: FSMContext):
             MANUAL_BLOCKED.remove(coin)
         MANUAL_ALLOWED.add(coin)
         price_history.clear()
+        logging.info(f"Монета добавлена в белый список: {coin}")
         await state.clear()
         await message.answer(f"✅ Монета {coin} добавлена в список исключений сканера!", reply_markup=get_main_menu())
     else:
@@ -295,6 +307,7 @@ async def proc_coin_del(message: types.Message, state: FSMContext):
         MANUAL_BLOCKED.add(coin)
         if f"{coin}USDT" in price_history:
             del price_history[f"{coin}USDT"]
+        logging.info(f"Монета заблокирована: {coin}")
         await state.clear()
         await message.answer(f"❌ Монета {coin} полностью удалена и заблокирована!", reply_markup=get_main_menu())
     else:
@@ -306,11 +319,12 @@ async def proc_coin_del(message: types.Message, state: FSMContext):
 async def fetch_market_prices():
     exchange = USER_PROFILE["exchange"]
     filtered = {}
-    async with httpx.AsyncClient(timeout=8.0) as client:
+    # Ставим жесткий базовый таймаут для клиента
+    async with httpx.AsyncClient(timeout=6.0) as client:
         try:
             if exchange == "binance":
                 url = "https://fapi.binance.com/fapi/v1/ticker/price"
-                response = await client.get(url)
+                response = await client.get(url, timeout=4.0)
                 if response.status_code == 200:
                     for item in response.json():
                         symbol = item['symbol']
@@ -318,7 +332,7 @@ async def fetch_market_prices():
                             filtered[symbol] = float(item['price'])
             elif exchange == "bitget":
                 url = "https://api.bitget.com/api/v2/mix/market/tickers?productType=USDT-FUTURES"
-                response = await client.get(url)
+                response = await client.get(url, timeout=4.0)
                 if response.status_code == 200:
                     for item in response.json().get("data", []):
                         symbol = item.get('symbol', '')
@@ -326,7 +340,7 @@ async def fetch_market_prices():
                             filtered[symbol] = float(item.get('lastPr', 0))
             elif exchange == "bingx":
                 url = "https://open-api.bingx.com/openApi/swap/v2/quote/ticker"
-                response = await client.get(url)
+                response = await client.get(url, timeout=4.0)
                 if response.status_code == 200:
                     for item in response.json().get("data", []):
                         symbol = item.get('symbol', '').replace("-", "")
@@ -377,12 +391,13 @@ async def drops_monitoring_loop():
                             logging.error(f"Ошибка отправки сообщения: {e}")
                     price_history[symbol] = current_price
             else:
-                logging.warning("Нет данных с биржи, спим 20 секунд...")
-                await asyncio.sleep(20)
+                logging.warning("Нет данных с биржи, спим 15 секунд...")
+                await asyncio.sleep(15)
         except Exception as loop_err:
             logging.error(f"Внутренняя ошибка цикла: {loop_err}")
-        for _ in range(int(USER_PROFILE["check_interval"])):
-            await asyncio.sleep(1)
+        
+        # Засыпаем сразу на весь интервал, разгружая event loop
+        await asyncio.sleep(int(USER_PROFILE["check_interval"]))
 
 # ==========================================
 # ЧАСТЬ 4: ЧИСТЫЙ АСИНХРОННЫЙ ЗАПУСК
@@ -426,4 +441,3 @@ if __name__ == "__main__":
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
         logging.info("Бот остановлен.")
-
