@@ -373,7 +373,7 @@ async def send_startup_message(session):
 
         f"🔥 Short RVOL: <b>5m</b>\n"
 
-        f"👁 OI: <b>История за ~10м</b>\n\n"
+        f"👁 OI: <b>История за ~1м</b>\n\n"
 
         "🚀 <i>Мониторинг рынка начат.</i>\n"
         "⏳ <i>OI-история накапливается. "
