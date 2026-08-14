@@ -373,7 +373,7 @@ async def send_startup_message(session):
 
         f"🔥 Short RVOL: <b>5m</b>\n"
 
-        f"👁 OI: <b>История за ~1м</b>\n\n"
+        f"👁 OI: <b>История за ~100000</b>\n\n"
 
         "🚀 <i>Мониторинг рынка начат.</i>\n"
         "⏳ <i>OI-история накапливается. "
@@ -614,59 +614,40 @@ async def get_klines(
 #                  OPEN INTEREST
 # ============================================================
 
-async def fetch_open_interest(
-    session,
-    symbol
-):
-
-    url = (
-        "https://open-api.bingx.com/"
-        "openApi/swap/v2/quote/openInterest"
-    )
-
-    params = {
-        "symbol": symbol.replace("-", "")
-    }
+async def fetch_open_interest(session, symbol):
+    url = "https://open-api.bingx.com/openApi/swap/v2/quote/openInterest"
+    params = {"symbol": symbol.replace("-", "")}
 
     try:
-
-        async with session.get(
-            url,
-            params=params,
-            timeout=5
-        ) as resp:
-
+        async with session.get(url, params=params, timeout=5) as resp:
             if resp.status != 200:
                 return None
-
             data = await resp.json()
-
             if data.get("code") != 0:
                 return None
 
-            oi_data = data.get(
-                "data",
-                {}
-            )
+            oi_data = data.get("data")
+            
+            # Если BingX вернул список, берем первый элемент
+            if isinstance(oi_data, list) and len(oi_data) > 0:
+                oi_data = oi_data[0]
 
-            if not isinstance(
-                oi_data,
-                dict
-            ):
-                return None
-
-            val = float(
-                oi_data.get(
-                    "openInterest",
-                    0
+            if isinstance(oi_data, dict):
+                # Пробуем разыменовать ключевые поля BingX
+                val = (
+                    oi_data.get("openInterest") 
+                    or oi_data.get("openInterestValue") 
+                    or oi_data.get("value") 
+                    or 0
                 )
-            )
-
-            return val if val > 0 else None
+                val = float(val)
+                return val if val > 0 else None
 
     except Exception:
-
         return None
+
+    return None
+
 
 
 # ============================================================
