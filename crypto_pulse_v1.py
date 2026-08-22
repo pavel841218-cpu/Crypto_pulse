@@ -2,7 +2,9 @@ import os
 import time
 import asyncio
 import logging
+import threading
 import aiohttp
+from flask import Flask
 
 # ============================================================
 #                    CONFIGURATION
@@ -10,20 +12,31 @@ import aiohttp
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID", "YOUR_TELEGRAM_CHAT_ID")
+PORT = int(os.environ.get("PORT", 10000))
 
 # Фильтры крупного игрока
 MIN_24H_VOLUME_USDT = 10_000_000  # $10M+ суточный объем
-MIN_OPEN_INTEREST_USDT = 8_000_000 # $8M+ открытый интерес
-
-# Критерии накопления на 4H
 MAX_BASE_RANGE_PCT = 4.5          # Макс. ширина полки (4.5%)
-MIN_ACCUMULATION_CANDLES = 3      # Минимум 3 свечи по 4H (12 часов боковика)
+MIN_ACCUMULATION_CANDLES = 3      # 12 часов накопления (3 свечи по 4H)
 MIN_RVOL_4H = 2.2                 # Всплеск объема в 2.2+ раза
 MAX_RSI_4H = 58.0                 # RSI не должен быть перегрет
 
 CHECK_INTERVAL_SECONDS = 300      # Проверка каждые 5 минут
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+
+# ============================================================
+#                     FLASK (ДЛЯ RENDER)
+# ============================================================
+
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "MacroPulse 4H | Active", 200
+
+def run_flask():
+    app.run(host="0.0.0.0", port=PORT)
 
 # ============================================================
 #                 HELPERS & PARSERS
@@ -110,7 +123,6 @@ async def analyze_4h_setup(session, symbol, current_price):
                 highs.append(h)
                 lows.append(l)
 
-            # 1. Анализ накопительной базы (последние N свечей)
             recent_highs = highs[-MIN_ACCUMULATION_CANDLES:]
             recent_lows = lows[-MIN_ACCUMULATION_CANDLES:]
             max_p = max(recent_highs)
@@ -118,21 +130,19 @@ async def analyze_4h_setup(session, symbol, current_price):
             
             range_pct = ((max_p - min_p) / min_p) * 100.0
             if range_pct > MAX_BASE_RANGE_PCT:
-                return None # Волатильность слишком большая (нет сжатия)
+                return None
 
-            # 2. Анализ RVOL на 4H
             current_vol = volumes[-1]
             hist_vol = volumes[-11:-1]
             avg_hist_vol = sum(hist_vol) / len(hist_vol) if hist_vol else 1
             
             rvol_4h = current_vol / avg_hist_vol if avg_hist_vol > 0 else 1.0
             if rvol_4h < MIN_RVOL_4H:
-                return None # Нет заливки аномального объема
+                return None
 
-            # 3. Проверка RSI
             rsi = calculate_rsi(closes)
             if rsi > MAX_RSI_4H:
-                return None # Монета уже улетела
+                return None
 
             return {
                 "range_pct": range_pct,
@@ -172,9 +182,11 @@ async def main():
                         f"💡 <i>Крупный игрок зажимает цену и набирает позицию перед выстрелом!</i>"
                     )
                     await send_telegram_alert(session, msg)
-                    await asyncio.sleep(2) # Задержка между сигналами
+                    await asyncio.sleep(2)
 
             await asyncio.sleep(CHECK_INTERVAL_SECONDS)
 
 if __name__ == "__main__":
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
     asyncio.run(main())
