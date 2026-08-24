@@ -16,7 +16,7 @@ PORT = int(os.environ.get("PORT", 10000))
 SELF_URL = os.environ.get("RENDER_EXTERNAL_URL", "").strip()
 
 # Оптимизированные фильтры накопительной базы
-MIN_24H_VOLUME_USDT = 8_000_000   # Порог $8M+ расширяет выборку
+MIN_24H_VOLUME_USDT = 300_000   # Порог $8M+ расширяет выборку
 MAX_BASE_RANGE_PCT = 6.0          # Ширина базы до 6% (реалистично для 4H)
 ACCUMULATION_CANDLES = 5          # 20 часов накопления (5 свечей по 4H)
 MIN_RVOL_4H = 1.35                # Всплеск объема от 1.35x (акула начинает входить)
