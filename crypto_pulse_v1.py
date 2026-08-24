@@ -15,20 +15,19 @@ CHAT_ID = os.environ.get("CHAT_ID", "YOUR_TELEGRAM_CHAT_ID")
 PORT = int(os.environ.get("PORT", 10000))
 SELF_URL = os.environ.get("RENDER_EXTERNAL_URL", "").strip()
 
-# Оптимизированные фильтры накопительной базы (4H)
-MIN_24H_VOLUME_USDT = 300_000     
-MAX_BASE_RANGE_PCT = 16.0         # Ширина полки до 16%
-ACCUMULATION_CANDLES = 5          # 5 закрытых свечей (20 часов проторговки)
+# Фильтры накопительной базы и Live-пробоя (4H)
+MIN_24H_VOLUME_USDT = 300_000     # Минимальный суточный объем ($300k+)
+MAX_BASE_RANGE_PCT = 16.0         # Ширина полки/базы до 16%
+ACCUMULATION_CANDLES = 5          # 5 закрытых свечей (20 часов накопления)
 
-# ПОРОГИ ДЛЯ ТЕКУЩЕЙ СВЕЧИ
-MIN_BREAKOUT_PCT = 0.8            # Сигнал уходит сразу при пробое верхнего уровня на +0.8%
-MAX_BREAKOUT_PCT = 15.0           # Не даем сигналу уйти, если цена оторвалась выше +15%
-MIN_RVOL_4H = 0.8                 # RVOL для неполной свечи (может быть в начале 4H периода)
-MAX_RSI_4H = 75.0
+# ПОРОГИ ДЛЯ ТЕКУЩЕЙ (ОТКРЫТОЙ) СВЕЧИ
+MIN_BREAKOUT_PCT = 0.8            # Сигнал уходит при пробое верха полки от +0.8%
+MAX_BREAKOUT_PCT = 15.0           # Защита от запоздалого входа (макс. +15% от верха полки)
+MIN_RVOL_4H = 0.8                 # Минимальный прогнозируемый RVOL
+MAX_RSI_4H = 75.0                 # RSI по закрытым свечам
 
-
-CHECK_INTERVAL_SECONDS = 300      
-ALERT_COOLDOWN_SECONDS = 14400    
+CHECK_INTERVAL_SECONDS = 300      # Проверка каждые 5 минут
+ALERT_COOLDOWN_SECONDS = 14400    # Кулдаун на одну монету — 4 часа
 
 EXCLUDE_KEYWORDS = [
     "XAUT", "GOLD", "PAXG", "USDC", "BTCDOM", "ETHDAI",
@@ -166,16 +165,13 @@ async def analyze_4h_setup(session, symbol, current_price):
             parsed = [parse_kline(c) for c in candles if parse_kline(c)[0] > 0]
             parsed.sort(key=lambda x: x[0])
 
-            # БЕРЕМ ВСЕ СВЕЧИ:
-            # parsed[-1] — это ТЕКУЩАЯ ОТКРЫТАЯ свеча
-            # parsed[:-1] — это ЗАКРЫТЫЕ свечи
             current_candle = parsed[-1]
             closed_candles = parsed[:-1]
 
             if len(closed_candles) < ACCUMULATION_CANDLES + 5:
                 return None
 
-            # 1. Формируем накопительную полку ИСКЛЮЧИТЕЛЬНО из закрытых свечей
+            # 1. Полка накопления по закрытым свечам
             base_candles = closed_candles[-ACCUMULATION_CANDLES:]
             base_highs = [c[2] for c in base_candles]
             base_lows = [c[3] for c in base_candles]
@@ -186,29 +182,28 @@ async def analyze_4h_setup(session, symbol, current_price):
             if min_p <= 0:
                 return None
 
-            # 2. Проверяем ширину полки накопления
+            # 2. Проверка ширины полки
             range_pct = ((max_p - min_p) / min_p) * 100.0
-            if range_pct > MAX_BASE_RANGE_PCT:  # например, <= 16%
+            if range_pct > MAX_BASE_RANGE_PCT:
                 return None
 
-            # 3. ПРОБОЙ В РЕАЛЬНОМ ВРЕМЕНИ:
-            # Сравниваем ТЕКУЩУЮ ЦЕНУ (live) с верхней границей сформированной полки
+            # 3. Пробой в реальном времени (относительно верха полки)
             breakout_pct = ((current_price - max_p) / max_p) * 100.0
-            
-            # Ловим момент, когда цена ТОЛЬКО НАЧАЛА пробивать полку (например, от +0.5% до +15%)
             if breakout_pct < MIN_BREAKOUT_PCT or breakout_pct > MAX_BREAKOUT_PCT:
                 return None
 
-            # 4. РАСЧЕТ RVOL ДЛЯ ТЕКУЩЕЙ (ОТКРЫТОЙ) СВЕЧИ
-            current_vol = current_candle[5] * current_price  # Объем текущей свечи в USDT
+            # 4. Расчет экстраполированного RVOL для открытой свечи
+            current_vol = current_candle[5] * current_price
+            candle_open_sec = current_candle[0] / 1000.0
+            elapsed_sec = max(time.time() - candle_open_sec, 60.0)
             
-            # Средний объем закрытых свечей из истории
+            projected_vol = (current_vol / elapsed_sec) * 14400.0
+
             hist_volumes = [c[5] * c[4] for c in closed_candles[-10:]]
             avg_hist_vol = sum(hist_volumes) / len(hist_volumes) if hist_volumes else 1
             
-            rvol_live = current_vol / avg_hist_vol if avg_hist_vol > 0 else 1.0
+            rvol_live = projected_vol / avg_hist_vol if avg_hist_vol > 0 else 1.0
 
-            # На старте пробоя объем может только заходить, ставим умеренный порог (например, >= 1.0)
             if rvol_live < MIN_RVOL_4H:
                 return None
 
@@ -229,7 +224,6 @@ async def analyze_4h_setup(session, symbol, current_price):
             }
     except Exception:
         return None
-
 
 # ============================================================
 #                     MAIN LOOP
@@ -261,9 +255,10 @@ async def process_ticker(session, ticker, semaphore):
     if setup:
         coin = symbol.split("-")[0]
         msg = (
-            f"💣 <b>ПОДГОТОВКА К ПАМПУ (4H)</b> | <code>{coin}</code>\n\n"
-            f"📦 <b>Накопление:</b> {setup['duration_hours']} часов в пределах {setup['range_pct']:.2f}%\n"
-            f"📊 <b>RVOL 4H:</b> {setup['rvol']:.2f}x\n"
+            f"💣 <b>ИМПУЛЬС ИЗ ПОЛКИ (4H LIVE)</b> | <code>{coin}</code>\n\n"
+            f"📦 <b>Накопление:</b> {setup['duration_hours']}ч в пределах {setup['range_pct']:.2f}%\n"
+            f"🚀 <b>Текущий пробой:</b> +{setup['breakout_pct']:.2f}%\n"
+            f"📊 <b>Прогноз RVOL 4H:</b> {setup['rvol']:.2f}x\n"
             f"📈 <b>RSI 4H:</b> {setup['rsi']:.1f}\n\n"
             f"🎯 <b>Верхняя граница базы:</b> {format_price(setup['base_high'])}\n"
             f"🛡 <b>Нижняя граница (Стоп):</b> {format_price(setup['base_low'])}\n"
@@ -274,8 +269,21 @@ async def process_ticker(session, ticker, semaphore):
 
 async def main():
     async with aiohttp.ClientSession() as session:
-        logging.info("🎯 MACRO_PULSE (4H Pump Hunter) Запущен")
+        logging.info("🎯 MACRO_PULSE (4H Live Pump Hunter) Запущен")
         asyncio.create_task(self_ping())
+
+        # ОПОВЕЩЕНИЕ О ЗАПУСКЕ БОТА В ТЕЛЕГРАМ
+        startup_msg = (
+            "🚀 <b>БОТ MACROPULSE 4H УСПЕШНО ЗАПУЩЕН!</b>\n\n"
+            "⚙️ <b>Параметры отслеживания:</b>\n"
+            f"• Накопление: {ACCUMULATION_CANDLES * 4}ч (база <= {MAX_BASE_RANGE_PCT}%)\n"
+            f"• Пробой live-свечи: +{MIN_BREAKOUT_PCT}% ... +{MAX_BREAKOUT_PCT}%\n"
+            f"• Порог RVOL: >= {MIN_RVOL_4H}x (экстраполяция)\n"
+            f"• RSI: <= {MAX_RSI_4H}\n"
+            f"• Интервал сканирования: {CHECK_INTERVAL_SECONDS // 60} мин\n\n"
+            "🟢 Сканирование рынка начато..."
+        )
+        await send_telegram_alert(session, startup_msg)
 
         while True:
             tickers = await get_top_tickers(session)
