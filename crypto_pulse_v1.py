@@ -16,12 +16,16 @@ PORT = int(os.environ.get("PORT", 10000))
 SELF_URL = os.environ.get("RENDER_EXTERNAL_URL", "").strip()
 
 # Оптимизированные фильтры накопительной базы (4H)
-MIN_24H_VOLUME_USDT = 300_000     # Минимальный объем 24ч ($300k+)
-MAX_BASE_RANGE_PCT = 16.0         # Ширина полки/базы поднята до 16%
-ACCUMULATION_CANDLES = 5          # 20 часов накопления (5 свечей по 4H)
-MIN_RVOL_4H = 1.35                # Всплеск объема от 1.35x
-MAX_RSI_4H = 65.0                 # RSI до 65
-MAX_PRICE_DISTANCE_FROM_BASE = 5.0 # Макс. отрыв от хая базы (%) для широкой полки
+MIN_24H_VOLUME_USDT = 300_000     
+MAX_BASE_RANGE_PCT = 16.0         # Ширина полки до 16%
+ACCUMULATION_CANDLES = 5          # 5 закрытых свечей (20 часов проторговки)
+
+# ПОРОГИ ДЛЯ ТЕКУЩЕЙ СВЕЧИ
+MIN_BREAKOUT_PCT = 0.8            # Сигнал уходит сразу при пробое верхнего уровня на +0.8%
+MAX_BREAKOUT_PCT = 15.0           # Не даем сигналу уйти, если цена оторвалась выше +15%
+MIN_RVOL_4H = 0.8                 # RVOL для неполной свечи (может быть в начале 4H периода)
+MAX_RSI_4H = 75.0
+
 
 CHECK_INTERVAL_SECONDS = 300      
 ALERT_COOLDOWN_SECONDS = 14400    
@@ -162,14 +166,17 @@ async def analyze_4h_setup(session, symbol, current_price):
             parsed = [parse_kline(c) for c in candles if parse_kline(c)[0] > 0]
             parsed.sort(key=lambda x: x[0])
 
+            # БЕРЕМ ВСЕ СВЕЧИ:
+            # parsed[-1] — это ТЕКУЩАЯ ОТКРЫТАЯ свеча
+            # parsed[:-1] — это ЗАКРЫТЫЕ свечи
+            current_candle = parsed[-1]
             closed_candles = parsed[:-1]
-            if len(closed_candles) < ACCUMULATION_CANDLES + 10:
+
+            if len(closed_candles) < ACCUMULATION_CANDLES + 5:
                 return None
 
-            closes = [c[4] for c in closed_candles]
-            volumes = [c[5] * c[4] for c in closed_candles]
-
-            base_candles = closed_candles[-(ACCUMULATION_CANDLES + 1):-1]
+            # 1. Формируем накопительную полку ИСКЛЮЧИТЕЛЬНО из закрытых свечей
+            base_candles = closed_candles[-ACCUMULATION_CANDLES:]
             base_highs = [c[2] for c in base_candles]
             base_lows = [c[3] for c in base_candles]
 
@@ -179,28 +186,42 @@ async def analyze_4h_setup(session, symbol, current_price):
             if min_p <= 0:
                 return None
 
+            # 2. Проверяем ширину полки накопления
             range_pct = ((max_p - min_p) / min_p) * 100.0
-            if range_pct > MAX_BASE_RANGE_PCT:
+            if range_pct > MAX_BASE_RANGE_PCT:  # например, <= 16%
                 return None
 
-            if current_price > max_p * (1 + MAX_PRICE_DISTANCE_FROM_BASE / 100):
+            # 3. ПРОБОЙ В РЕАЛЬНОМ ВРЕМЕНИ:
+            # Сравниваем ТЕКУЩУЮ ЦЕНУ (live) с верхней границей сформированной полки
+            breakout_pct = ((current_price - max_p) / max_p) * 100.0
+            
+            # Ловим момент, когда цена ТОЛЬКО НАЧАЛА пробивать полку (например, от +0.5% до +15%)
+            if breakout_pct < MIN_BREAKOUT_PCT or breakout_pct > MAX_BREAKOUT_PCT:
                 return None
 
-            current_vol = volumes[-1]
-            hist_vol = volumes[-11:-1]
-            avg_hist_vol = sum(hist_vol) / len(hist_vol) if hist_vol else 1
-            rvol_4h = current_vol / avg_hist_vol if avg_hist_vol > 0 else 1.0
+            # 4. РАСЧЕТ RVOL ДЛЯ ТЕКУЩЕЙ (ОТКРЫТОЙ) СВЕЧИ
+            current_vol = current_candle[5] * current_price  # Объем текущей свечи в USDT
+            
+            # Средний объем закрытых свечей из истории
+            hist_volumes = [c[5] * c[4] for c in closed_candles[-10:]]
+            avg_hist_vol = sum(hist_volumes) / len(hist_volumes) if hist_volumes else 1
+            
+            rvol_live = current_vol / avg_hist_vol if avg_hist_vol > 0 else 1.0
 
-            if rvol_4h < MIN_RVOL_4H:
+            # На старте пробоя объем может только заходить, ставим умеренный порог (например, >= 1.0)
+            if rvol_live < MIN_RVOL_4H:
                 return None
 
+            # 5. RSI по закрытым свечам
+            closes = [c[4] for c in closed_candles]
             rsi = calculate_rsi(closes)
             if rsi > MAX_RSI_4H:
                 return None
 
             return {
                 "range_pct": range_pct,
-                "rvol": rvol_4h,
+                "breakout_pct": breakout_pct,
+                "rvol": rvol_live,
                 "rsi": rsi,
                 "base_high": max_p,
                 "base_low": min_p,
@@ -208,6 +229,7 @@ async def analyze_4h_setup(session, symbol, current_price):
             }
     except Exception:
         return None
+
 
 # ============================================================
 #                     MAIN LOOP
