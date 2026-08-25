@@ -22,7 +22,7 @@ MIN_24H_VOLUME_USDT = 50_000    # Минимальная ликвидность 
 SHELF_LOOKBACK_CANDLES = 4      # Полка из 4 закрытых 4H свечей (16 часов)
 MAX_SHELF_WIDTH_PCT = 6.0       # Максимальная ширина полки (до 6%)
 MIN_BREAKOUT_PCT = 2.5          # Старт импульса (от +2.5% от верха полки)
-CHECK_INTERVAL_SECONDS = 180    # Проверка каждые 3 минуты
+CHECK_INTERVAL_SECONDS = 30    # Проверка каждые 30 секунд
 ALERT_COOLDOWN_SECONDS = 4 * 3600
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
