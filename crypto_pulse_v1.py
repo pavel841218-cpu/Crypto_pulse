@@ -18,7 +18,7 @@ PORT = int(os.environ.get("PORT", 10000))
 BINGX_BASE = "https://open-api.bingx.com"
 
 # --- Единственные базовые триггеры для фиксации импульса ---
-MIN_24H_VOLUME_USDT = 50_000    # Минимальная ликвидность ($50k)
+MIN_24H_VOLUME_USDT = 100_000    # Минимальная ликвидность ($100k)
 SHELF_LOOKBACK_CANDLES = 4      # Полка из 4 закрытых 4H свечей (16 часов)
 MAX_SHELF_WIDTH_PCT = 6.0       # Максимальная ширина полки (до 6%)
 MIN_BREAKOUT_PCT = 2.5          # Старт импульса (от +2.5% от верха полки)
