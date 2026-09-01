@@ -3,3 +3,4 @@ requests
 flask
 gunicorn
 numpy
+aiogram
