@@ -1,6 +1,3 @@
 aiohttp
-requests
-flask
-gunicorn
+curl_cffi
 numpy
-aiogram
