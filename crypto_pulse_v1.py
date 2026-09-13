@@ -292,8 +292,21 @@ class QuasimodoBotCore:
 # ==========================================
 # 6. ТОЧКА ВХОДА И WEB-SERVER (Для Render)
 # ==========================================
+import os
+import traceback
+from aiohttp import web
+
 async def handle_ping(request):
     return web.Response(text="Bot is running!")
+
+async def run_bot_safe(symbol):
+    """Обертка для перехвата и вывода всех ошибок бота в логи Render."""
+    try:
+        bot = QuasimodoBotCore(symbol=symbol)
+        await bot.start()
+    except Exception as e:
+        logging.error(f"❌ КРИТИЧЕСКАЯ ОШИБКА В РАБОТЕ БОТА: {e}")
+        logging.error(traceback.format_exc())
 
 async def main():
     # 1. Поднимаем Web-сервер для порт-чекера Render
@@ -307,9 +320,8 @@ async def main():
     await site.start()
     logging.info(f"HTTP-сервер запущен на порту {port}")
 
-    # 2. Запускаем торговый бот фоновой задачей
-    bot = QuasimodoBotCore(symbol=SYMBOL)
-    asyncio.create_task(bot.start())
+    # 2. Запускаем торговый бот с перехватом ошибок
+    asyncio.create_task(run_bot_safe(SYMBOL))
 
     # 3. Удерживаем цикл бесконечно
     await asyncio.Event().wait()
