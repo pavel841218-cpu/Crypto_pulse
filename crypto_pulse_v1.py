@@ -289,11 +289,34 @@ class QuasimodoBotCore:
                 await self.bingx_executor.execute_market_long(kline['close'])
 
 # ==========================================
-# 6. ТОЧКА ВХОДА
+# 6. ТОЧКА ВХОДА И WEB-SERVER (Для Render Портов)
 # ==========================================
-if __name__ == "__main__":
+import os
+
+async def handle_ping(request):
+    return aiohttp.web.Response(text="Bot is running!")
+
+async def start_web_server():
+    app = aiohttp.web.Application()
+    app.router.add_get("/", handle_ping)
+    runner = aiohttp.web.AppRunner(app)
+    await runner.setup()
+    
+    port = int(os.environ.get("PORT", 10000))
+    site = aiohttp.web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logging.info(f"HTTP заглушка для Render запущена на порту {port}")
+
+async def main():
+    # Запускаем HTTP-сервер для удержания порта Render
+    await start_web_server()
+    
+    # Запускаем торгового бота
     bot = QuasimodoBotCore(symbol=SYMBOL)
+    await bot.start()
+
+if __name__ == "__main__":
     try:
-        asyncio.run(bot.start())
+        asyncio.run(main())
     except KeyboardInterrupt:
         logging.info("Бот остановлен пользователем.")
