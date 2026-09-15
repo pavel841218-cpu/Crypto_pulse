@@ -1,4 +1,1 @@
-aiohttp
-curl_cffi
-numpy
-aiogram
+aiohttp>=3.9.0
