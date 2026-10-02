@@ -1,7 +1,21 @@
 import os
-import time
-import requests
-import numpy as np
+import threading
+from flask import Flask
+
+# Встроенный веб-сервер для поддержки Render Web Service & UptimeRobot
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Bot is alive!", 200
+
+def run_http_server():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
+
+# Запуск веб-сервера в отдельном потоке
+threading.Thread(target=run_http_server, daemon=True).start()
+
 
 # --- НАСТРОЙКИ И КОНФИГУРАЦИЯ ---
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN")
