@@ -1,5 +1,3 @@
-aiohttp>=3.9.0
-aiogram
-requests 
-numpy 
-flask 
+requests
+numpy
+flask
