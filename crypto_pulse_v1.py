@@ -1,5 +1,4 @@
 
-Вот он
 
 import asyncio
 import aiohttp
